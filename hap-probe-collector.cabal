@@ -1,0 +1,41 @@
+name:               hap-probe-collector
+version:            0.1
+license:            BSD3
+license-file:       LICENSE
+copyright:          Copyright (c) 2012 David Joyner
+author:             David Joyner <david@joynerhome.net>
+stability:          experimental
+tested-with:        GHC == 7.0.4
+synopsis:           Home Automation Project - Probe Collector
+cabal-version:      >= 1.8
+homepage:           https://github.com/djoyner/hap-probe-collector
+build-type:         Simple
+description:        
+    A personal project involving an Arduino-based temperature and power-usage
+    probe, ZigBee wireless interfaces, and Haskell-based backend collector code.
+ 
+extra-source-files:
+  arduino/*
+
+source-repository head
+  type:             git
+  location:         git://github.com/djoyner/hap-probe-collector
+
+Executable hap-probe-collector
+  hs-source-dirs:   src/collector
+  main-is:          Main.hs
+  
+  ghc-options:      -O2 -Wall -fno-warn-missing-signatures
+
+  build-depends:
+    aeson,
+    base,
+    bytestring,
+    cereal,
+    cmdargs,
+    conduit,
+    mtl,
+    old-time,
+    transformers,
+    zigbee-znet25
+
