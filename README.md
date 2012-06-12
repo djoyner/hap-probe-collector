@@ -16,12 +16,6 @@ the XBee wireless network and then initiates data polling.  As poll
 notifications are received from the probes they are serialized as JSON objects
 and printed to stdout.
 
-# TODO
-
-* Map probe XBee addresses (64-bit values, similar to MAC addresses found in
-  Ethernet adapters) to probe id's.  Currently all probes have id = 1.
-  This mapping needs to be read from a config file.
-
 # Author
 
 David Joyner, <david@joynerhome.net>

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS -fno-warn-orphans #-}
 
 module Message (
     Datum
@@ -14,8 +15,8 @@ import Data.Word
 import Constants
 
 data Datum = DatumTypeNotImplemented Word8
-           | WattHours Word32
-           | AmbientTemp Word8
+           | CounterData Word32
+           | TemperatureData Float
   deriving Show
 
 instance Serialize Datum where
@@ -27,41 +28,38 @@ instance Serialize Datum where
       go typeId
     where
       go typeId
-        | typeId == dataIdWattHours   = getWattHours
-        | typeId == dataIdAmbientTemp = getAmbientTemp
+        | typeId == dataIdCounter     = getCounterData
+        | typeId == dataIdTemperature = getTemperatureData
         | otherwise                   = return $ DatumTypeNotImplemented typeId
 
-getWattHours = WattHours <$> getWord32le
+getCounterData = CounterData <$> getWord32le
 
-getAmbientTemp = AmbientTemp <$> getWord8
+getTemperatureData = TemperatureData <$> getFloat32le
 
 instance ToJSON Datum where
   toJSON (DatumTypeNotImplemented typeId) =
-    object [ "DatumTypeNotImplemented" .= typeId ]
+    object [ "type_not_implemented" .= typeId ]
 
-  toJSON (WattHours x) =
-    object [ "WattHours" .= x ]
+  toJSON (CounterData x) =
+    object [ "counter" .= x ]
 
-  toJSON (AmbientTemp x) =
-    object [ "AmbientTemp" .= x ]
+  toJSON (TemperatureData x) =
+    object [ "temperature" .= x ]
 
 data Message = MessageTypeNotImplemented Word8
              | PollRequest
                { prSync :: Word32
-               , prSampleInterval :: Word8
-               , prProbeId :: Word8 }
+               , prSampleInterval :: Word8 }
              | PollNotification
                { pnSync:: Word32
-               , pnProbeId :: Word8
-               , pnProbeData :: [Datum] }
+               , pnData :: [Datum] }
   deriving Show
 
 instance Serialize Message where
-  put (PollRequest sync sampleInterval probeId) =
-    putWord8 msgIdPollRequest >>
+  put (PollRequest sync sampleInterval) =
+    put msgIdPollRequest >>
     putWord32le sync >>
-    putWord8 sampleInterval >>
-    putWord8 probeId
+    put sampleInterval
   
   put _ = error "Unsupported put (Message)"
 
@@ -74,17 +72,16 @@ instance Serialize Message where
 getPollNotification =
   PollNotification <$>
     getWord32le <*>
-    getWord8 <*>
-    (getWord8 >> getProbeData)  -- skip count byte
+    (getWord8 >> getDataList)  -- skip count byte
 
-getProbeData = isEmpty >>= go
+getDataList = isEmpty >>= go
   where
-    go False = liftM2 (:) get getProbeData
+    go False = liftM2 (:) get getDataList
     go True  = return []
 
 instance ToJSON Message where
-  toJSON (PollNotification sync probeId probeData) =
-    object [ "sync" .= sync, "probeId" .= probeId, "probeData" .= probeData ]
+  toJSON (PollNotification sync ds) =
+    object [ "sync" .= sync, "data" .= ds ]
 
   toJSON _ = error "Unsupported toJSON (Message)"
 

@@ -7,6 +7,6 @@ msgIdPollRequest = 0x01 :: Word8
 msgIdPollNotification = 0x02 :: Word8
 
 -- Probe data id constants
-dataIdWattHours = 0x01 :: Word8
-dataIdAmbientTemp = 0x02 :: Word8
+dataIdCounter = 0x01 :: Word8
+dataIdTemperature = 0x02 :: Word8
 

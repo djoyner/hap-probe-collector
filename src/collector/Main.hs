@@ -1,11 +1,11 @@
-{-# LANGUAGE BangPatterns, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE BangPatterns, GeneralizedNewtypeDeriving, OverloadedStrings #-}
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.Writer
-import qualified Data.Aeson as A
+import Data.Aeson
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import Data.Maybe
@@ -49,20 +49,21 @@ main = do
         -- Print error strings
         Left errStr        -> outError cc errStr
         -- Send response frames and stream JSON-formatted results, if any
-        Right (ms, fs, ss) -> mapM_ (outDebug cc) ss >>
+        Right (ds, fs, ss) -> mapM_ (outDebug cc) ss >>
                               mapM_ (outModem m) fs >>
-                              mapM_ outData ms
+                              mapM_ outJSON ds
   where
-    outData m     = BL.hPutStr IO.stdout (A.encode m) >> putStrLn ""
-    outError cc x = when (ccDebug cc) $ IO.hPutStrLn IO.stderr $ "ERROR: " ++ x 
-    outDebug cc x = when (ccDebug cc) $ IO.hPutStrLn IO.stderr $ "DEBUG: " ++ x 
+    outDebug cc x     = when (ccDebug cc) $ IO.hPutStrLn IO.stderr $ "DEBUG: " ++ x 
+    outError cc x     = when (ccDebug cc) $ IO.hPutStrLn IO.stderr $ "ERROR: " ++ x 
+    outJSON (addr, m) = BL.hPutStr IO.stdout (encode $ wrap addr m) >> IO.hPutStrLn IO.stdout ""
+    wrap addr m       = object [ "address " .= show addr, "message" .= m ]
 
 -- Process DecoderResults received from the modem
 processDecoderResult (Just (ReceivedFrame f)) =
   processFrame f
 
 processDecoderResult (Just (DecoderError errStr)) =
-  throwError $ "Decoder error: " ++ errStr
+  throwError errStr
 
 processDecoderResult Nothing =
   tellDebug ["Timed out without receiving any events from modem, resending neighbor discover (ATND)"] >> 
@@ -84,7 +85,8 @@ processFrame (ZF.ZigBeeReceivePacket addr nwaddr _ val) =
 
 processFrame _ = return []
 
-processMessage addr nwaddr m@(PollNotification sync _ _) = do
+-- Process poll notifications from the probe
+processMessage addr nwaddr m@(PollNotification sync _) = do
   -- Calculate probe clock drift: sync error occurs when drift > epsilon
   TOD now _ <- liftIO getClockTime
   cc <- ask
@@ -97,7 +99,7 @@ processMessage addr nwaddr m@(PollNotification sync _ _) = do
     tellDebug [printf "Probe %s drift is up to %u seconds, resending poll request" (show addr) drift] >>
     sendPollRequest addr nwaddr
 
-  return [m]
+  return [(addr, m)]
 
 processMessage _ _ _ = return []
 
@@ -118,8 +120,7 @@ sendPollRequest addr nwaddr = do
   cc <- ask
   let m = PollRequest
           { prSync = fromIntegral now
-          , prSampleInterval = ccInterval cc
-          , prProbeId = 1 }
+          , prSampleInterval = ccInterval cc }
       f = ZF.ZigBeeTransmitRequest 0 addr nwaddr 0 0 $ DS.encode m
   tellFrame [f]
 
@@ -154,6 +155,10 @@ tellFrame fs = tell (fs, mempty)
 tellDebug ss = tell (mempty, ss)
 
 throwDecoderError errStr = throwError $ "Decoder error: " ++ errStr
+
+-- JSON instances
+instance ToJSON ZF.Address where
+  toJSON = toJSON . ZF.unAddress
 
 -- Command line argument processing
 argsMode =

@@ -11,8 +11,8 @@
 
 #undef DEBUG
 
-#define IR_SAMPLE_PIN 4          // IR photodiode pin number
-#define IR_SAMPLE_PERIOD 5       // 5 milliseconds
+#define COUNTER_SAMPLE_PIN 4     // IR photodiode pin number
+#define COUNTER_SAMPLE_PERIOD 5  // 5 milliseconds
 
 #define TMP102_SLAVE_ADDR 0x48   // TMP102 ADDR0 = GND
 
@@ -60,10 +60,9 @@ const StateTransition _fsm[STATE_MAX][EVENT_TYPE_MAX] = {
 
 State _state = STATE_RESET;
 uint32_t _timeout = 0;
-int _irPinReading = HIGH;
-uint32_t _wattHours = 0;
+int _counterPinReading = HIGH;
+uint32_t _counterData = 0;
 uint32_t _pollInterval = 0;
-uint8_t _pollId = 0;
 
 // Other Globals
 NewSoftSerial _nss = NewSoftSerial(3, 2);
@@ -72,12 +71,11 @@ XBee _xbee(&_nss);
 void setup() {
   // Initialize serial port and say hello
   Serial.begin(9600);
-  Serial.println("This is a probe, yo");
 
-  // Start IR photodiode sampling
-  Serial.println("Starting IR photodiode sampling");
-  pinMode(IR_SAMPLE_PIN, INPUT);
-  MsTimer2::set(IR_SAMPLE_PERIOD, irSampleTimeout);
+  // Start counter sampling
+  Serial.println("Starting counter sampling");
+  pinMode(COUNTER_SAMPLE_PIN, INPUT);
+  MsTimer2::set(COUNTER_SAMPLE_PERIOD, counterSampleTimeout);
   MsTimer2::start();
 
   // Join I2C bus
@@ -99,14 +97,14 @@ void loop() {
   handlePacket();
 }
 
-void irSampleTimeout() {
-  const int irPinReading = digitalRead(IR_SAMPLE_PIN);
+void counterSampleTimeout() {
+  const int counterPinReading = digitalRead(COUNTER_SAMPLE_PIN);
 
   // Only count HIGH->LOW transitions
-  if (_irPinReading == HIGH && irPinReading == LOW)
-      _wattHours++;
+  if (_counterPinReading == HIGH && counterPinReading == LOW)
+      _counterData++;
 
-  _irPinReading = irPinReading;
+  _counterPinReading = counterPinReading;
 }
 
 float readAmbientTemp() {
@@ -239,15 +237,12 @@ void handleRxResponse(XBeeResponse &resp) {
           DateTime.sync(poll->sync);
 
         _pollInterval = poll->interval * 1000;
-        _pollId = poll->id;
 
         Serial.print("[Received poll request, sync = ");
         Serial.print(poll->sync, HEX);
         Serial.print(", interval = ");
         Serial.print(poll->interval, DEC);
-        Serial.print(" sec, id = ");
-        Serial.print(poll->id, HEX);
-        Serial.println("]");
+        Serial.println(" sec]");
 
         dispatchEvent(_pollInterval ? EVENT_TYPE_POLL_STARTED : EVENT_TYPE_POLL_STOPPED);
       }
@@ -405,47 +400,46 @@ void actDiscoverNodes() {
 }
 
 void actPrintIdleHello() {
-  const uint32_t wattHours = _wattHours;
-  const float ambientTemp = readAmbientTemp();
+  const uint32_t counterData = _counterData;
+  const float tempData = readAmbientTemp();
 
-  Serial.print("Idling (wattHours = ");
-  Serial.print(wattHours);
-  Serial.print(", ambientTemp = ");
-  Serial.print(ambientTemp, 2);
+  Serial.print("Idling (counter = ");
+  Serial.print(counterData);
+  Serial.print(", temp = ");
+  Serial.print(tempData, 2);
   Serial.println(")");
 }
 
 void actTransmitPollNotification() {
-  const uint8_t wattHourTlvLen = 2 + sizeof(uint32_t);
-  const uint8_t tempTlvLen = 2 + sizeof(uint8_t);
-  const uint8_t bufferLen = sizeof(ProbePollNotification) + wattHourTlvLen + tempTlvLen;
+  const uint8_t counterDataTlvLen = 2 + sizeof(uint32_t);
+  const uint8_t tempDataTlvLen = 2 + sizeof(float);
+  const uint8_t bufferLen = sizeof(ProbePollNotification) + counterDataTlvLen + tempDataTlvLen;
   uint8_t buffer[bufferLen];
 
   ProbePollNotification *notif = (ProbePollNotification *) buffer;
   notif->message = PROBE_MSG_POLL_NOTIFICATION;
   notif->sync = DateTime.now();
-  notif->id = _pollId;
   notif->count = 2;
 
-  const uint32_t wattHours = _wattHours;
-  const float ambientTemp = readAmbientTemp();
+  const uint32_t counterData = _counterData;
+  const float tempData = readAmbientTemp();
 
   uint8_t *tlv = (uint8_t *) (notif + 1);
-  *tlv++ = PROBE_DATA_TYPE_WATT_HOURS;
+  *tlv++ = PROBE_DATA_TYPE_COUNTER;
   *tlv++ = sizeof(uint32_t);
-  memcpy(tlv, &wattHours, sizeof(uint32_t));
+  memcpy(tlv, &counterData, sizeof(uint32_t));
   tlv += sizeof(uint32_t);
 
-  *tlv++ = PROBE_DATA_TYPE_AMBIENT_TEMP;
-  *tlv++ = sizeof(uint8_t);
-  *tlv++ = byte(ambientTemp);
+  *tlv++ = PROBE_DATA_TYPE_TEMPERATURE;
+  *tlv++ = sizeof(float);
+  memcpy(tlv, &tempData, sizeof(float));
 
   Serial.print("Sending poll notification (sync = ");
   Serial.print(notif->sync);
-  Serial.print(", wattHours = ");
-  Serial.print(wattHours);
-  Serial.print(", ambientTemp = ");
-  Serial.print(ambientTemp, 2);
+  Serial.print(", counter = ");
+  Serial.print(counterData);
+  Serial.print(", temperature = ");
+  Serial.print(tempData, 2);
   Serial.println(")");
 
   XBeeAddress64 zeroAddr(0, 0);
