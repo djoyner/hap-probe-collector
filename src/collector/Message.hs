@@ -17,6 +17,7 @@ import Constants
 data Datum = DatumTypeNotImplemented Word8
            | CounterData Word32
            | TemperatureData Float
+           | RelHumidityData Float
   deriving Show
 
 instance Serialize Datum where
@@ -30,11 +31,14 @@ instance Serialize Datum where
       go typeId
         | typeId == dataIdCounter     = getCounterData
         | typeId == dataIdTemperature = getTemperatureData
+        | typeId == dataIdRelHumidity = getRelHumidityData
         | otherwise                   = return $ DatumTypeNotImplemented typeId
 
 getCounterData = CounterData <$> getWord32le
 
 getTemperatureData = TemperatureData <$> getFloat32le
+
+getRelHumidityData = RelHumidityData <$> getFloat32le
 
 instance ToJSON Datum where
   toJSON (DatumTypeNotImplemented typeId) =
@@ -45,6 +49,9 @@ instance ToJSON Datum where
 
   toJSON (TemperatureData x) =
     object [ "temperature" .= x ]
+
+  toJSON (RelHumidityData x) =
+    object [ "rel_humidity" .= x ]
 
 data Message = MessageTypeNotImplemented Word8
              | PollRequest

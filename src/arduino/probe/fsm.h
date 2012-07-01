@@ -1,4 +1,5 @@
-enum State {
+enum State
+{
   STATE_RESET,
   STATE_DISCOVER,
   STATE_IDLE,
@@ -6,8 +7,10 @@ enum State {
   STATE_MAX
 };
 
-static inline const char *stateName(State s) {
-  switch (s) {
+static inline const char *stateName(State s)
+{
+  switch (s)
+  {
     case STATE_RESET:
       return "RESET";
     case STATE_DISCOVER:
@@ -21,7 +24,8 @@ static inline const char *stateName(State s) {
   }
 }
 
-enum EventType {
+enum EventType
+{
   EVENT_TYPE_NONE,
   EVENT_TYPE_TIMEOUT,
   EVENT_TYPE_MODEM_ASSOCIATED,
@@ -33,8 +37,10 @@ enum EventType {
   EVENT_TYPE_MAX
 };
 
-static inline const char *eventName(EventType e) {
-  switch (e) {
+static inline const char *eventName(EventType e)
+{
+  switch (e)
+  {
     case EVENT_TYPE_TIMEOUT:
       return "TIMEOUT";
     case EVENT_TYPE_MODEM_ASSOCIATED:
@@ -54,7 +60,8 @@ static inline const char *eventName(EventType e) {
   }
 }
 
-struct StateTransition {
+struct StateTransition
+{
   EventType event;
   void (*action1)(void);
   void (*action2)(void);
