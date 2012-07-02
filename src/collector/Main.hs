@@ -26,7 +26,7 @@ import Message
 import Modem
 
 defaultInterval = "15" -- seconds
-defaultEpsilon  = "1"  -- seconds
+defaultEpsilon  = "5"  -- seconds
 
 main = do
     -- Process command line arguments
@@ -38,8 +38,8 @@ main = do
     let cc          = configFromArgs args
         debug       = isJust $ lookup flDebug args
         device      = ccDevice cc
-        -- use a modem inactivity timeout that's twice the sampling interval
-        timeoutUsec = (fromIntegral $ ccInterval cc) * 2000000 
+        -- use a modem inactivity timeout that's 3x the sampling interval
+        timeoutUsec = (fromIntegral $ ccInterval cc) * 3000000 
 
     IO.hSetBuffering IO.stdout IO.LineBuffering
     IO.hSetBuffering IO.stderr IO.LineBuffering
