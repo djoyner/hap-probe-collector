@@ -63,7 +63,7 @@ main = do
     outLog            = IO.hPutStrLn IO.stderr
     outError x        = IO.hPutStrLn IO.stderr $ "ERROR: " ++ x 
     outJSON (addr, m) = BL.hPutStr IO.stdout (encode $ wrap addr m) >> IO.hPutStrLn IO.stdout ""
-    wrap addr m       = object [ "type" .= ("probe" :: String), "address " .= show addr, "message" .= m ]
+    wrap addr m       = object [ "type" .= ("probe" :: String), "address" .= show addr, "message" .= m ]
 
 -- Process DecoderResults received from the modem
 processDecoderResult (Just (ReceivedFrame f)) =

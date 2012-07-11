@@ -9,6 +9,7 @@ module Message (
 import Control.Applicative
 import Control.Monad (liftM2)
 import Data.Aeson
+import qualified Data.HashMap.Strict as HashMap
 import Data.Serialize
 import Data.Word
 
@@ -40,18 +41,10 @@ getTemperatureData = TemperatureData <$> getFloat32le
 
 getRelHumidityData = RelHumidityData <$> getFloat32le
 
-instance ToJSON Datum where
-  toJSON (DatumTypeNotImplemented typeId) =
-    object [ "type_not_implemented" .= typeId ]
-
-  toJSON (CounterData x) =
-    object [ "counter" .= x ]
-
-  toJSON (TemperatureData x) =
-    object [ "temperature" .= x ]
-
-  toJSON (RelHumidityData x) =
-    object [ "rel_humidity" .= x ]
+toPair (DatumTypeNotImplemented typeId) = "type_not_implemented" .= typeId
+toPair (CounterData x)                  = "counter" .= x
+toPair (TemperatureData x)              = "temperature" .= x
+toPair (RelHumidityData x)              = "rel_humidity" .= x
 
 data Message = MessageTypeNotImplemented Word8
              | PollRequest
@@ -88,7 +81,7 @@ getDataList = isEmpty >>= go
 
 instance ToJSON Message where
   toJSON (PollNotification sync ds) =
-    object [ "sync" .= sync, "data" .= ds ]
+    object [ "sync" .= sync, ("data", Object $ HashMap.fromList $ map toPair ds) ]
 
   toJSON _ = error "Unsupported toJSON (Message)"
 

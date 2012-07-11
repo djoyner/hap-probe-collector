@@ -37,5 +37,6 @@ Executable hap-probe-collector
     mtl,
     old-time,
     transformers,
+    unordered-containers,
     zigbee-znet25
 
