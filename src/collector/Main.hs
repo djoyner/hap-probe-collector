@@ -4,6 +4,7 @@
 module Main (main) where
 
 import Control.Applicative
+import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.Reader
@@ -23,11 +24,13 @@ import System.Timeout
 import Text.Printf
 
 import Message
-import Modem
+import qualified Modem as M
+import qualified ZeroMQ as Z
 
 defaultInterval = "15" -- seconds
 defaultEpsilon  = "5"  -- seconds
 
+main :: IO ()
 main = do
     -- Process command line arguments
     !args <- processArgs argsMode
@@ -35,45 +38,69 @@ main = do
       print $ helpText [] HelpFormatDefault argsMode
       exitSuccess
 
-    let cc          = configFromArgs args
-        debug       = isJust $ lookup flDebug args
-        device      = ccDevice cc
-        -- use a modem inactivity timeout that's 3x the sampling interval
-        timeoutUsec = (fromIntegral $ ccInterval cc) * 3000000 
+    -- Run collector
+    let cc = configFromArgs args
+    E.bracket (start cc) (end cc) (run cc)
 
-    IO.hSetBuffering IO.stdout IO.LineBuffering
-    IO.hSetBuffering IO.stderr IO.LineBuffering
-
-    -- Open modem and send initial ND command
-    outLog $ "Opening modem " ++ device ++ " and sending neighbor discovery command (ATND)"
-    m <- openModem device debug
-    outModem m atNDCommand
-
-    -- Run the main loop forever: wait for decoder results or timeout
-    forever $ timeout timeoutUsec (inModem m) >>= \r -> do
-      x <- runCollector cc $ processDecoderResult r
-      case x of
-        -- Print error strings
-        Left errStr        -> outError errStr
-        -- Send response frames and stream JSON-formatted results, if any
-        Right (ds, fs, ss) -> mapM_ outLog ss >>
-                              mapM_ (outModem m) fs >>
-                              mapM_ outJSON ds
+start cc = do
+    -- Open modem
+    m <- startModem
+    -- Bind ZeroMQ publisher (if applicable)
+    mbz <- maybe (return Nothing) (liftM Just . startPublisher) $ ccPublish cc
+    return (m, mbz)
   where
-    outLog            = IO.hPutStrLn IO.stderr
-    outError x        = IO.hPutStrLn IO.stderr $ "ERROR: " ++ x 
-    outJSON (addr, m) = BL.hPutStr IO.stdout (encode $ wrap addr m) >> IO.hPutStrLn IO.stdout ""
-    wrap addr m       = object [ "type" .= ("probe" :: String), "address" .= show addr, "message" .= m ]
+    startModem = do
+      let device = ccDevice cc
+          debug = ccDebug cc
+      outLog $ "Opening modem " ++ device ++ " and sending neighbor discovery command"
+      M.acquire device debug
+    startPublisher publish = do
+      outLog $ "Binding ZeroMQ PUB socket to " ++ publish
+      Z.acquire publish
+
+end _ (m, mbz) = do
+  -- Close modem
+  M.release m
+  -- Close ZeroMQ publisher
+  maybe (return ()) Z.release mbz
+
+run cc (m, mbz) = do
+  -- Send initial ND command
+  M.output m atNDCommand
+
+  -- Use line buffering everywhere
+  IO.hSetBuffering IO.stdout IO.LineBuffering
+  IO.hSetBuffering IO.stderr IO.LineBuffering
+
+  -- Run the main loop forever: wait for decoder results or timeout
+  -- (modem timeout is 3x the sampling interval)
+  let modemTimeout = (fromIntegral $ ccInterval cc) * 3000000
+  forever $ timeout modemTimeout (M.input m) >>= \r -> do
+    x <- runCollector cc $ processDecoderResult r
+    case x of
+      -- Print error strings
+      Left errStr        -> outError errStr
+      -- Send response frames and stream JSON-formatted results, if any
+      Right (ds, fs, ss) -> mapM_ outLog ss >>
+                            mapM_ (M.output m) fs >>
+                            mapM_ (outJSON mbz) ds
+
+outJSON mbz (addr, m) = out mbz
+  where
+    out (Just z) = Z.publish z $ B.concat $ BL.toChunks msg
+    out Nothing  = BL.hPutStr IO.stdout msg >> IO.hPutStrLn IO.stdout ""
+    msg          = encode wrapper
+    wrapper      = object [ "type" .= ("probe" :: String), "address" .= show addr, "message" .= m ]
 
 -- Process DecoderResults received from the modem
-processDecoderResult (Just (ReceivedFrame f)) =
+processDecoderResult (Just (M.ReceivedFrame f)) =
   processFrame f
 
-processDecoderResult (Just (DecoderError errStr)) =
+processDecoderResult (Just (M.DecoderError errStr)) =
   throwError errStr
 
 processDecoderResult Nothing =
-  tellLog ["Timed out without receiving any events from modem, resending neighbor discover (ATND)"] >> 
+  tellLog ["Timed out without receiving from modem, resending neighbor discover command"] >>
   tellFrame [atNDCommand] >>
   return []
 
@@ -101,7 +128,7 @@ processMessage addr nwaddr m@(PollNotification sync _) = do
       epsilon = ccEpsilon cc
       syncErr = drift > fromIntegral epsilon
 
-  -- When sync error occurs, resend probe request 
+  -- When sync error occurs, resend probe request
   when syncErr $
     tellLog [printf "Probe %s drift is up to %u seconds, resending poll request" (show addr) drift] >>
     sendPollRequest addr nwaddr
@@ -151,6 +178,8 @@ data CollectorConfig = CollectorConfig
   { ccDevice :: FilePath
   , ccInterval :: Word8
   , ccEpsilon :: Word8
+  , ccPublish :: Maybe String
+  , ccDebug :: Bool
   }
 
 -- Collector's writer type: supports writing frames as well as log messages
@@ -162,6 +191,10 @@ tellLog ss   = tell (mempty, ss)
 
 throwDecoderError errStr = throwError $ "Decoder error: " ++ errStr
 
+-- Conveniences
+outLog x   = IO.hPutStrLn IO.stderr x
+outError x = IO.hPutStrLn IO.stderr $ "ERROR: " ++ x
+
 -- JSON instances
 instance ToJSON ZF.Address where
   toJSON = toJSON . ZF.unAddress
@@ -169,13 +202,14 @@ instance ToJSON ZF.Address where
 -- Command line argument processing
 argsMode =
   initMode {
-    modeNames = [ "hap-probe-collector" ]  
+    modeNames = [ "hap-probe-collector" ]
   , modeHelp = "Home Automation Project: probe collector"
-  , modeGroupFlags = toGroup [ 
+  , modeGroupFlags = toGroup [
       flagNone [flDebug, "D"] (\v -> (flDebug, ""):v) "Enable debug output"
     , flagReq [flDevice, "d"] (updateArg flDevice) "DEVICE" "Path to modem device"
     , flagReq [flInterval, "i"] (updateArg flInterval) "SECS" $ printf "Sampling interval (default: %s sec)" defaultInterval
     , flagReq [flEpsilon, "e"] (updateArg flEpsilon) "SECS" $ printf "Time sync error tolerance (default: %s sec)" defaultEpsilon
+    , flagReq [flPublish, "p"] (updateArg flPublish) "ADDRESS" "Stream data to ZeroMQ PUB socket bound to ADDRESS"
     , flagHelpSimple ((flHelp, ""):)
     ]
   }
@@ -191,6 +225,8 @@ configFromArgs args =
       ccDevice = device
     , ccInterval = interval
     , ccEpsilon = epsilon
+    , ccPublish = lookup flPublish args
+    , ccDebug = isJust $ lookup flDebug args
     }
   where
     device   = case lookup flDevice args of
@@ -210,5 +246,6 @@ flDebug    = "debug"
 flDevice   = "device"
 flInterval = "interval"
 flEpsilon  = "epsilon"
+flPublish  = "publish"
 flHelp     = "help"
 

@@ -3,9 +3,10 @@
 module Modem (
     DecoderResult(..)
   , Modem
-  , openModem
-  , inModem
-  , outModem
+  , acquire
+  , input
+  , output
+  , release
 ) where
 
 import Control.Concurrent
@@ -16,32 +17,39 @@ import qualified System.IO as IO
 
 import Conduit
 
--- Modem is an I/O channel pair
-data Modem = Modem
-             { mInChan :: Chan DecoderResult
-             , mOutChan :: Chan ZF.Frame
-             , mDebug :: Bool }
+data Modem =
+  Modem
+    { mHandle :: IO.Handle
+    , mInChan :: Chan DecoderResult
+    , mOutChan :: Chan ZF.Frame
+    , mInThread :: ThreadId
+    , mOutThread :: ThreadId
+    , mDebug :: Bool }
 
--- Open modem
-openModem :: FilePath -> Bool -> IO (Modem)
-openModem path debug = do
-    h <- IO.openBinaryFile path IO.ReadWriteMode
-    IO.hSetBuffering h IO.NoBuffering
-    inChan <- newChan
-    _ <- forkIO $ runResourceT $ modemSource h $$ chanSink inChan
-    outChan <- newChan
-    _ <- forkIO $ runResourceT $ chanSource outChan $$ modemSink h
-    return $ Modem inChan outChan debug
+acquire :: FilePath -> Bool -> IO Modem
+acquire path debug = do
+  h <- IO.openBinaryFile path IO.ReadWriteMode
+  IO.hSetBuffering h IO.NoBuffering
+  inChan <- newChan
+  inThreadId <- forkIO $ runResourceT $ modemSource h $$ chanSink inChan
+  outChan <- newChan
+  outThreadId <- forkIO $ runResourceT $ chanSource outChan $$ modemSink h
+  return $ Modem h inChan outChan inThreadId outThreadId debug
 
--- Modem input/output
-inModem :: Modem -> IO DecoderResult
-inModem m = do
+input :: Modem -> IO DecoderResult
+input m = do
   r <- readChan $ mInChan m
   when (mDebug m) $ IO.hPutStrLn IO.stderr $ "IN: " ++ show r
   return r
 
-outModem :: Modem -> ZF.Frame -> IO ()
-outModem m !f = do
+output :: Modem -> ZF.Frame -> IO ()
+output m !f = do
   when (mDebug m) $ IO.hPutStrLn IO.stderr $ "OUT: " ++ show f
   writeChan (mOutChan m) f
+
+release :: Modem -> IO ()
+release m = do
+  killThread $ mInThread m
+  killThread $ mOutThread m
+  IO.hClose $ mHandle m
 

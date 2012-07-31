@@ -38,5 +38,6 @@ Executable hap-probe-collector
     old-time,
     transformers,
     unordered-containers,
-    zigbee-znet25
+    zigbee-znet25,
+    zeromq-haskell
 

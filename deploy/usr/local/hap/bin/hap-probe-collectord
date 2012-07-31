@@ -8,7 +8,7 @@ MODEM_DEVS=(`cd /sys/bus/usb-serial/drivers/ftdi_sio && /bin/ls -1d ttyUSB*`)
 MODEM_BAUD=9600
 INTERVAL=15
 EPSILON=5
-PUB_ADDR='tcp://0.0.0.0:5000'
+PUBLISH='tcp://0.0.0.0:5000'
 
 # Make sure we could guess at the modem device name
 MODEM_DEV=/dev/${MODEM_DEVS[0]}
@@ -22,10 +22,5 @@ fi
 # Set modem baud rate
 stty -F $MODEM_DEV 9600
 
-# Hack: run $1, piping stdout to $2 and providing $1's stderr as stdout
-function split()
-{
-    { exec $1 2>&3 | $2; } 3>&1;
-}
-
-split "$COLLECTOR -d $MODEM_DEV -i $INTERVAL -e $EPSILON" "zmqc -wb PUB $PUB_ADDR" | logger -t ` basename $0`
+# Run collector, publishing results to ZeroMQ socket and piping stderr to syslog
+$COLLECTOR -d $MODEM_DEV -i $INTERVAL -e $EPSILON -p $PUB_ADDR 2| logger -t ` basename $0`
