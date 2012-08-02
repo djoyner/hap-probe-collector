@@ -43,30 +43,19 @@ main = do
     E.bracket (start cc) (end cc) (run cc)
 
 start cc = do
-    -- Open modem
-    m <- startModem
-    -- Bind ZeroMQ publisher (if applicable)
-    mbz <- maybe (return Nothing) (liftM Just . startPublisher) $ ccPublish cc
+    m <- M.acquire (ccDevice cc) (ccDebug cc)
+    mbz <- maybe (return Nothing) (liftM Just . acquirePublisher) $ ccPublish cc
     return (m, mbz)
   where
-    startModem = do
-      let device = ccDevice cc
-          debug = ccDebug cc
-      outLog $ "Opening modem " ++ device ++ " and sending neighbor discovery command"
-      M.acquire device debug
-    startPublisher publish = do
-      outLog $ "Binding ZeroMQ PUB socket to " ++ publish
-      Z.acquire publish
+    acquirePublisher publish = Z.acquire publish (ccDebug cc)
 
 end _ (m, mbz) = do
-  -- Close modem
   M.release m
-  -- Close ZeroMQ publisher
   maybe (return ()) Z.release mbz
 
 run cc (m, mbz) = do
-  -- Send initial ND command
-  M.output m atNDCommand
+  -- Send initial modem reset (FR) command
+  M.output m atFRCommand
 
   -- Use line buffering everywhere
   IO.hSetBuffering IO.stdout IO.LineBuffering
@@ -99,17 +88,20 @@ processDecoderResult (Just (M.ReceivedFrame f)) =
 processDecoderResult (Just (M.DecoderError errStr)) =
   throwError errStr
 
-processDecoderResult Nothing =
-  tellLog ["Timed out without receiving from modem, resending neighbor discover command"] >>
-  tellFrame [atNDCommand] >>
+processDecoderResult Nothing = do
+  tellLog ["Timed out without receiving events from modem, resetting"]
+  tellFrame [atFRCommand]
   return []
 
 -- Process specific frame types
+processFrame (ZF.ModemStatus status) =
+  processModemStatus status
+
 processFrame (ZF.ATCommandResponse _frameId cmdName _cmdStatus val) =
   processATResponse (ZF.unCommandName cmdName) val
 
-processFrame (ZF.NodeIdentificationIndicator addr nwaddr _ _ _ _ _ _ _ _ _) =
-  sendPollRequest addr nwaddr >>
+processFrame (ZF.NodeIdentificationIndicator addr nwaddr _ _ _ _ _ _ _ _ _) = do
+  sendPollRequest addr nwaddr
   return []
 
 processFrame (ZF.ZigBeeReceivePacket addr nwaddr _ val) =
@@ -118,6 +110,14 @@ processFrame (ZF.ZigBeeReceivePacket addr nwaddr _ val) =
     Right m -> processMessage addr nwaddr m
 
 processFrame _ = return []
+
+-- Process modem status messages
+processModemStatus status | status == 6 = do
+  tellLog ["Modem coordinator started, discovering neighbors"]
+  tellFrame [atNDCommand]
+  return []
+
+processModemStatus _ = return []
 
 -- Process poll notifications from the probe
 processMessage addr nwaddr m@(PollNotification sync _) = do
@@ -130,7 +130,7 @@ processMessage addr nwaddr m@(PollNotification sync _) = do
 
   -- When sync error occurs, resend probe request
   when syncErr $
-    tellLog [printf "Probe %s drift is up to %u seconds, resending poll request" (show addr) drift] >>
+    tellLog [printf "Probe %s drift is up to %u seconds, resynchronizing" (show addr) drift] >>
     sendPollRequest addr nwaddr
 
   return [(addr, m)]
@@ -149,7 +149,7 @@ processATResponse _ _ = return []
 
 -- Send an application-level poll request message to a probe
 sendPollRequest addr nwaddr = do
-  tellLog ["Sending poll request to probe " ++ show addr]
+  tellLog ["Starting polling on probe " ++ show addr]
   TOD now _ <- liftIO getClockTime
   cc <- ask
   let m = PollRequest
@@ -157,6 +157,8 @@ sendPollRequest addr nwaddr = do
           , prSampleInterval = ccInterval cc }
       f = ZF.ZigBeeTransmitRequest 0 addr nwaddr 0 0 $ DS.encode m
   tellFrame [f]
+
+atFRCommand = ZF.ATCommand 0 (ZF.commandName "FR") B.empty
 
 atNDCommand = ZF.ATCommand 0 (ZF.commandName "ND") B.empty
 

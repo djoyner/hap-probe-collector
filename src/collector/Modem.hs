@@ -28,6 +28,7 @@ data Modem =
 
 acquire :: FilePath -> Bool -> IO Modem
 acquire path debug = do
+  when debug $ IO.hPutStrLn IO.stderr $ "Acquiring modem " ++ path
   h <- IO.openBinaryFile path IO.ReadWriteMode
   IO.hSetBuffering h IO.NoBuffering
   inChan <- newChan
@@ -49,6 +50,7 @@ output m !f = do
 
 release :: Modem -> IO ()
 release m = do
+  when (mDebug m) $ IO.hPutStrLn IO.stderr $ "Releasing modem"
   killThread $ mInThread m
   killThread $ mOutThread m
   IO.hClose $ mHandle m
