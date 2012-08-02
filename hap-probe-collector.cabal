@@ -12,7 +12,7 @@ homepage:           https://github.com/djoyner/hap-probe-collector
 build-type:         Simple
 description:        
     A personal project involving an Arduino-based temperature and power-usage
-    probe, ZigBee wireless interfaces, and Haskell-based backend collector code.
+    probe, ZigBee wireless interfaces, and Haskell.
  
 extra-source-files:
   arduino/*
